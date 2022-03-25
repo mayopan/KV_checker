@@ -1,7 +1,7 @@
 /*
     KV checker for R/C
     This program is for the original KV checker board using Seeed XIAO.
-    Schematic of the board is shown in github ->
+    Schematic of the board is shown in github -> https://github.com/mayopan/KV_checker
 
     It counts rotation of tire using photo reflector. You have to put some light color musking tape on the tire.
     It also measures voltage of battery with adc.
@@ -13,9 +13,16 @@
       *2nd Gear ratio
       *Tire dia
 
-    It has 5 mode for measure listed below.
+    KV is calculated from tire rotation speed with gear ratio parameter.
+    So you have to set the gear ratio parameter correctly to get true motor KV.
+    KVT is easier to check the equality of the top speed performance per voltage that includes motor KV and gear ratio.
+    For example, if the race regulation says KV < 2800rpm/V and gear ratio > 7,
+    KVT < 2800 / 7 = 400.
+
+    It has 6 mode for measure listed below.
 
       *KV       [rpm/V]     ...Rotation speed of Motor / Battery voltage
+      *KVT      [rpm/V]     ...Rotation speed of Tire / Battery voltage
       *VOLTAGE  [V]         ...Battery voltage
       *SPD      [km/h]      ...Speed
       *TIRE RPM [rpm]       ...Rotation speed of tire
@@ -36,23 +43,24 @@
 #define BUTTON_SELECT 4
 #define ROT 7
 
-
 #define AVERAGE_COUNT 10 // durations = 1.7ms/r @ 40km/h, 62mm tire. avarage 10 round takes 17ms.
 #define VOLT_AVERAGE 40
-#define VOLT_MEASURE_DURATION 1000 // us for timer interrupt
+#define VOLT_MEASURE_DURATION 1000 // us for timer interrupt = 1kHz
 #define FPS 5                      // Frame rate for display
 
-// Max Voltage of ADR is 1V. INPUT VOLTAGE: 0-8.5V
-// R1:6.8k, R2:51k  (51+6.8)/6.8=8.5
+// Max Voltage of ADR is set to 1V. Battery voltage: 0-8.5V
+// The voltage divider resistors are R1:6.8k & R2:51k  (51+6.8)/6.8=8.5
 #define VOLTAGE_DIVIDER_RATIO 8.5
 
 // Duration in 1 round with 62mm dia tire sould be larger than 7000us when VMAX < 80[km/h]
 // VMAX 80[km/h] / 3600[s/h] * 1e6[mm/km] / (62 * 3.14)[mm/r] = 114[r/s] = 8772[us/r]
+// So shorter detection than 7000us will be noise and ignored.
 #define IGNORE_DURATION 7000
 
 enum measure_mode
 {
   MODE_KV,
+  MODE_KVT,
   MODE_VOLTAGE,
   MODE_SPD,
   MODE_RPM_TIRE,
@@ -109,6 +117,11 @@ const uint8_t SEG_KV[] = {
     SEG_B | SEG_C | SEG_E | SEG_F | SEG_G, // K
     SEG_B | SEG_C | SEG_D | SEG_E | SEG_F, // V
     0, 0};
+const uint8_t SEG_KVT[] = {
+    SEG_B | SEG_C | SEG_E | SEG_F | SEG_G, // K
+    SEG_B | SEG_C | SEG_D | SEG_E | SEG_F, // V
+    SEG_D | SEG_E | SEG_F | SEG_G,         // t
+    0};
 const uint8_t SEG_GR[] = {
     SEG_A | SEG_C | SEG_D | SEG_E | SEG_F,         // G
     SEG_A | SEG_B | SEG_C | SEG_E | SEG_F | SEG_G, // R
@@ -180,6 +193,9 @@ void showMode()
   {
   case MODE_KV:
     display.setSegments(SEG_KV, 4);
+    break;
+  case MODE_KVT:
+    display.setSegments(SEG_KVT, 4);
     break;
   case MODE_GRSET:
     display.setSegments(SEG_GR, 4);
@@ -413,9 +429,11 @@ void loop()
   int rpm_motor;
   float spd;
   int kv;
+  int kvtx10;
   if (rotation_count >= AVERAGE_COUNT) // Triggered by rotation_Counter interrupt when AVERAGE_COUNT round is detected
   {
     rpm_tire = (int)(1e6 / d * 60);
+    kvtx10=(int)(rpm_tire*10/volt);
     rpm_motor = (int)(rpm_tire * reduction.total_gear_ratio);
     kv = (int)(rpm_motor / volt);
     spd = 3.1415 * reduction.tire_dia / 1000000 * rpm_tire * 60;
@@ -424,6 +442,9 @@ void loop()
     {
     case MODE_KV:
       display.showNumberDec(kv, false);
+      break;
+    case MODE_KVT:
+      display.showNumberDecEx(kvtx10,0b00100000, false);
       break;
     case MODE_VOLTAGE:
       display.showNumberDecEx((int)(volt * 1000), 0b10000000, true);
